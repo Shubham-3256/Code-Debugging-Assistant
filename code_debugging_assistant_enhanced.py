@@ -2,7 +2,7 @@ import gradio as gr
 import subprocess
 import tempfile
 import os
-from gemini import get_gemini_fix  
+from gemini import get_gemini_fix, analyze_code_quality  # ✅ Import both functions
 
 # Function to run the uploaded Python script
 def run_python_script(code_text):
@@ -27,7 +27,7 @@ def run_python_script(code_text):
 
     return stdout, stderr
 
-# Process uploaded file
+# Process uploaded file and return all outputs
 def process_file(file):
     with open(file.name, "r", encoding="utf-8") as f:
         code = f.read()
@@ -42,23 +42,30 @@ def process_file(file):
         explanation = "✅ No errors found."
         suggested_fix = code
 
-    return code, stdout, stderr, explanation, suggested_fix
+    # Quality analysis
+    quality = analyze_code_quality(code)
+    score = quality.get("score", 0)
+    good = quality.get("good_practices", "N/A")
+    bad = quality.get("bad_practices", "N/A")
+    summary = quality.get("summary", "N/A")
 
-# Rerun the fixed code
+    return code, stdout, stderr, explanation, suggested_fix, suggested_fix, score, good, bad, summary
+
+# Rerun user-edited fixed code
 def rerun_fixed_code(code_text):
     stdout, stderr = run_python_script(code_text)
     return stderr or stdout
 
-# Save the fixed code to a downloadable file
+# Save user-edited fixed code to a file
 def save_fixed_code(code_text):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp:
         tmp.write(code_text)
         return tmp.name
 
-# Gradio UI setup
+# Gradio UI
 with gr.Blocks() as demo:
     gr.Markdown("## 🐞 Code Debugging Assistant")
-    gr.Markdown("Upload a `.py` file to run it, debug using Gemini, and apply suggested fixes.")
+    gr.Markdown("Upload a `.py` file to analyze, debug using Gemini, and improve your code!")
 
     with gr.Row():
         file_input = gr.File(label="📁 Upload Python File", file_types=[".py"])
@@ -77,27 +84,56 @@ with gr.Blocks() as demo:
         with gr.Tab("💡 Gemini Explanation"):
             explanation_output = gr.Textbox(label="Explanation", lines=10)
 
-        with gr.Tab("🛠️ Suggested Fix"):
-            fix_output = gr.Code(label="Fixed Code", language="python", interactive=True)
+        with gr.Tab("🧠 Gemini Suggested Fix"):
+            suggested_fix_output = gr.Code(label="Suggested Fix (Read-Only)", language="python", interactive=False)
 
-        with gr.Tab("🔁 Run Fixed Code"):
-            rerun_button = gr.Button("▶️ Run Fixed Code")
+        with gr.Tab("✍️ Editable Fixed Code"):
+            fix_output = gr.Code(label="Edit and Fix Code", language="python", interactive=True)
+            with gr.Row():
+                rerun_button = gr.Button("▶️ Run Fixed Code")
+                revert_button = gr.Button("↩️ Revert to Suggested Fix")
+
+        with gr.Tab("🧪 Fixed Code Output"):
             fixed_output = gr.Textbox(label="Fixed Code Output", lines=10)
 
         with gr.Tab("⬇️ Download Fix"):
             download_button = gr.Button("💾 Download Fixed Code")
-            download_file = gr.File()
+            download_file = gr.File(label="Download")
 
+        with gr.Tab("📊 Code Quality Analysis"):
+            score_slider = gr.Slider(minimum=0, maximum=10, step=1, label="Code Score (out of 10)")
+            good_points_output = gr.Textbox(label="✅ Good Practices", lines=4)
+            bad_points_output = gr.Textbox(label="❌ Areas to Improve", lines=4)
+            summary_output = gr.Textbox(label="📌 Summary", lines=4)
+
+    # Button triggers
     run_button.click(
         fn=process_file,
         inputs=file_input,
-        outputs=[code_output, stdout_output, error_output, explanation_output, fix_output]
+        outputs=[
+            code_output,
+            stdout_output,
+            error_output,
+            explanation_output,
+            suggested_fix_output,
+            fix_output,
+            score_slider,
+            good_points_output,
+            bad_points_output,
+            summary_output
+        ]
     )
 
     rerun_button.click(
         fn=rerun_fixed_code,
         inputs=fix_output,
         outputs=fixed_output
+    )
+
+    revert_button.click(
+        fn=lambda suggested: suggested,
+        inputs=suggested_fix_output,
+        outputs=fix_output
     )
 
     download_button.click(
@@ -108,4 +144,4 @@ with gr.Blocks() as demo:
 
 # Launch the app
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(share=True)
